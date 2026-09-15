@@ -1,1 +1,42 @@
 # NPU-Inference-Performance-Optimization
+
+vLLM-Ascend 框架上针对 GLM / DeepSeek 等大模型的推理性能优化工程。
+
+## 方案文档
+
+- [**总体方案设计**](docs/00-总体方案设计.md) — 六阶段完整流水线：模型部署 → 基线数据 → 算子 Profiling 采集 → 算子分析 → CANNBot 算子开发 → 测试验证
+
+## 技术路线概览
+
+```
+模型部署  →  基线数据  →  Profiling 采集  →  算子分析  →  算子开发  →  验证
+ (vLLM-      (TTFT/          (kernel_          (画像表/      (AscendC/     (加速比/
+  Ascend)     TPOT/吞吐)      details.csv)      融合候选)     CANNBot)     精度回归)
+```
+
+## 环境
+
+| 组件 | 版本 |
+|------|------|
+| 芯片 | Ascend 910 系列，8 卡 × 2 die = 16 逻辑设备 |
+| CANN | 9.0.0 |
+| PyTorch / torch_npu | 2.7.1 / 2.7.1.post4 |
+| vLLM-Ascend | 见方案文档 2.2 节 |
+
+详见 [方案文档 · 环境基线](docs/00-总体方案设计.md#2-环境基线本机实测)
+
+## 目录结构
+
+**本仓库即工作区**：除模型部署（在仓库外执行）外，阶段二 ~ 六的全部产物均落在此目录内。外部路径（CANNBot、模型权重、参考实现等）只读引用，不就地写入。
+
+```
+docs/        方案与规范文档
+configs/     部署配置快照（部署在仓库外执行，此处仅归档）
+bench/       基线采集脚本
+results/     基线数据与优化后数据
+profiles/    Profiling 采集数据
+analysis/    算子画像表与融合候选清单
+ops/         自研算子工程
+verify/      验证报告
+tools/       公共脚本
+```
