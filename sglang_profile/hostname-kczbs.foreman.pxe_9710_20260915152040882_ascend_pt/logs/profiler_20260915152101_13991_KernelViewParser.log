@@ -1,0 +1,5 @@
+[2026-09-15-15:21:01.911] [INFO] [AscendProfiler_KernelViewParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9710_20260915152040882_ascend_pt/logs/profiler_20260915152101_13991_KernelViewParser.log
+[2026-09-15-15:21:01.911] [INFO] [AscendProfiler_KernelViewParser:38] KernelViewParser start.
+[2026-09-15-15:21:01.942] [WARNING] [AscendProfiler_KernelViewParser:69] Get step range failed, the step node list is empty.
+[2026-09-15-15:21:01.942] [WARNING] [AscendProfiler_KernelViewParser:82] Kernel view get step range failed, the step range is empty.
+[2026-09-15-15:21:02.264] [INFO] [AscendProfiler_KernelViewParser:46] KernelViewParser finish.

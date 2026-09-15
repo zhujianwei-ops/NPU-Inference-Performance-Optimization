@@ -1,0 +1,21 @@
+# ============================================================
+# Profiling 数据归档策略
+# ============================================================
+# 原始采集目录 3.0 GiB，仅归档可读的分析产物（约 21 MiB）。
+# 下列排除项均可在本地用 msprof / MindStudio Insight 从原始采集目录重新生成。
+# 如需补归档某类文件，删除对应规则后重新 add 即可。
+
+# ---- 1. 超过 GitHub 单文件 100 MiB 硬限制（push 会被直接拒绝）----
+sglang_profile/**/trace_view.json
+sglang_profile/**/operator_details.csv
+sglang_profile/**/ascend_pytorch_profiler_*.db
+sglang_profile/**/torch.op_range
+sglang_profile/**/torch.python_tracer_func
+
+# ---- 2. 原始二进制中间产物（msprof 原始采样，非直接可读）----
+sglang_profile/**/PROF_*/
+
+# ---- 3. 通用 ----
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,4 @@
+[2026-09-15-15:21:02.675] [INFO] [AscendProfiler_TraceStepTimeParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9711_20260915152040881_ascend_pt/logs/profiler_20260915152102_14001_TraceStepTimeParser.log
+[2026-09-15-15:21:02.675] [INFO] [AscendProfiler_TraceStepTimeParser:169] TraceStepTimeParser start.
+[2026-09-15-15:21:02.711] [WARNING] [AscendProfiler_TraceStepTimeParser:69] Get step range failed, the step node list is empty.
+[2026-09-15-15:21:03.540] [INFO] [AscendProfiler_TraceStepTimeParser:177] TraceStepTimeParser finish.
