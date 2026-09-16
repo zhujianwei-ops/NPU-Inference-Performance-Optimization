@@ -1,0 +1,126 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>NPU 推理 Profiling 算子耗时分析报告</title>
+<style>
+body{font-family:"Microsoft YaHei",-apple-system,Segoe UI,sans-serif;margin:0;background:#f5f7fa;color:#1c2430;line-height:1.6}
+.wrap{max-width:1320px;margin:0 auto;padding:28px 22px 60px}
+h1{font-size:26px;margin:0 0 6px}h2{font-size:19px;margin:34px 0 10px;padding-left:10px;border-left:4px solid #2b7de9}
+h3{font-size:15px;margin:18px 0 8px;color:#31415a}
+.sub{color:#68788c;font-size:13px;margin-bottom:18px}
+.cards{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 6px}
+.card{flex:1 1 190px;background:#fff;border:1px solid #e3e8ef;border-radius:10px;padding:14px 16px}
+.card .k{font-size:12px;color:#68788c}.card .v{font-size:22px;font-weight:600;margin-top:2px}
+.card .n{font-size:12px;color:#8a97a8;margin-top:2px}
+table{border-collapse:collapse;width:100%;background:#fff;font-size:13px;box-shadow:0 1px 2px rgba(20,40,80,.06)}
+th,td{border:1px solid #e6ebf2;padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#eef3fa;font-weight:600;white-space:nowrap}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:nth-child(even) td{background:#fafcff}
+code{background:#eef2f7;padding:1px 4px;border-radius:4px;font-size:12px}
+.bad{color:#c62828;font-weight:600}.warn{color:#ef6c00;font-weight:600}.ok{color:#2e7d32;font-weight:600}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;color:#fff}
+.p0{background:#c62828}.p1{background:#ef6c00}.p2{background:#1565c0}
+.note{background:#fffbe6;border:1px solid #ffe58f;border-radius:8px;padding:12px 16px;font-size:13px}
+.bar{background:#eef2f7;border-radius:3px;height:8px;overflow:hidden;min-width:60px}
+.bar span{display:block;height:100%}
+</style></head><body><div class="wrap">
+<h1>NPU 推理 Profiling 算子耗时分析报告</h1>
+<div class="sub">数据源：<code>sglang_profile/hostname-kczbs.foreman.pxe_971{0,1}_*_ascend_pt/ASCEND_PROFILER_OUTPUT</code>（Ascend 910B，CANN 9.0.0，torch_npu 2.10.0，2 卡 device 6/7，采集于 2026-09-15 15:20~15:21）</div>
+<div class="cards">
+<div class="card"><div class="k">设备侧算子总耗时（rank0/device6）</div><div class="v">345.6 ms</div><div class="n">14602 个 kernel，1095 种算子，采集窗口 10.85 s</div></div>
+<div class="card"><div class="k">MatMulV2 占比</div><div class="v">55.4%</div><div class="n">191.3 ms / 2249 次</div></div>
+<div class="card"><div class="k">Transpose 占比</div><div class="v">20.0%</div><div class="n">69.2 ms / 158 次（正常应 &lt; 1%）</div></div>
+<div class="card"><div class="k">小 kernel（均值 &lt; 20 us）</div><div class="v">11417 个</div><div class="n">占 kernel 总数 78%，合计 57.6 ms</div></div>
+<div class="card"><div class="k">真正有负载的时间</div><div class="v">~2.1 s</div><div class="n">10.85 s 窗口里设备只在 0~2.2 s 工作</div></div>
+</div>
+<h2>一、结论摘要</h2><ol><li><b>耗时高度集中</b>：MatMulV2（55.4%）+ Transpose（20.0%）占设备时间约 3/4，其余 1000+ 种算子合计不到 25%。</li><li><b>最异常的是“KV/状态缓存索引链”</b>：754 个 kernel 花掉 81.5 ms（23.6%），其中两次 5 维张量转置各 16.09 ms，是整份 profile 最慢的单个 kernel，属布局不匹配导致的整块拷贝，投入产出比最高。</li><li><b>两卡通信严重不对称</b>：rank1(device7) 的通信 kernel 均值 1529 us、合计 1507.9 ms（占其设备时间 45%），rank0 同类算子均值仅 10.2 us，相差 150 倍，必须排查。</li><li><b>算子实现本身大多健康</b>：逐元素类单次 1~7 us 且方差极小；GDN 线性注意力主链 8~48 us 很稳定；大矩阵乘 cube 利用率 74.5%~95.9%，属正常水平。</li><li><b>收益主要来自“融合 + 减数量”</b>：1095 种算子里 1039 种均值不足 20 us，11417 个小 kernel 合计只占 57.6 ms 设备时间，却带来 3302 次 host 发射（约 157 ms）与大量流上排队（Cast 一项累计等待 182.6 ms）。</li><li><b>host 侧最大单点</b>：<code>aclnnNonzeroV2</code> 单次 19.6~35.9 ms（rank0 共 124.8 ms、rank1 共 160.2 ms），来自 hybrid linear attention 后端每步的 <code>torch.nonzero</code>。</li></ol>
+<div class="note"><b>数据可信度说明（重要）</b><br>1）本次采集 <code>with_stack=True</code>，产生 178.5 万个 python_function 事件（trace_view.json 达 708 MB / 641 MB），<b>host 侧耗时被严重放大</b>；本报告结论以<b>设备侧 kernel 数据</b>为准，host 数值只做横向比较。<br>2）采集日志出现 <code>Get step range failed, the step node list is empty</code>：profiler 未识别 step 边界，因此 <code>step_trace_time.csv</code> 与 Kernel/Operator View 的“按 step”指标是<b>整个会话的聚合值</b>，不能当单步耗时用。<br>3）10.85 s 窗口内设备只在 0~2.2 s 真正跑模型（2 次 <code>step[EXTEND bs=1 toks=1]</code> + 6 次 <code>step[TARGET_VERIFY bs=1]</code>），其余约 8.6 s 是 prefill delayer 的空转协商循环（每轮 all_gather + broadcast）。统计样本只有 2 个 prefill + 6 个 verify 迭代。<br>4）rank1 的 <code>kernel_details.csv</code> / TASK 表把通信条目（AivKernel、hcom_allReduce__503_*）计入通信任务，总量 3.34 s 与 <code>op_statistic.csv</code> 的 0.326 s 不一致；跨卡比较请以 <code>op_statistic.csv</code> 或本报告 rank0 表为准。<br>5）建议下次用 <code>torch_npu.profiler</code> 的 schedule + <code>profiler.step()</code> 显式打点并关闭 with_stack，否则拿不到单步指标。</div>
+<h2>二、设备侧算子耗时总览（rank0 / device 6，合计 345.6 ms）</h2>
+<table><tr><th>算子</th><th>kernel 数</th><th>总耗时 (ms)</th><th>占比</th><th>占比图</th><th>均值 (us)</th><th>P50</th><th>P99</th><th>最大 (us)</th><th>累计等待 (ms)</th></tr>
+<tr><td><code>aclnnMatmul_MatMulCommon_MatMulV2</code></td><td class="num">2249</td><td class="num">191.324</td><td class="num bad">55.36%</td><td><div class="bar"><span style="width:99.65%;background:#2b7de9"></span></div></td><td class="num">85.1</td><td class="num">73.6</td><td class="num">957.7</td><td class="num">978.2</td><td class="num">205.6</td></tr>
+<tr><td><code>aclnnIndexPutImpl_TransposeAiCore_Transpose</code></td><td class="num">98</td><td class="num">56.966</td><td class="num bad">16.48%</td><td><div class="bar"><span style="width:29.67%;background:#2b7de9"></span></div></td><td class="num">581.3</td><td class="num">284.7</td><td class="num">16052.1</td><td class="num">16087.2</td><td class="num">4.7</td></tr>
+<tr><td><code>aclnnIndex_TransposeAiCore_Transpose</code></td><td class="num">48</td><td class="num">12.079</td><td class="num warn">3.50%</td><td><div class="bar"><span style="width:6.29%;background:#2b7de9"></span></div></td><td class="num">251.7</td><td class="num">250.3</td><td class="num">314.4</td><td class="num">314.4</td><td class="num">18.1</td></tr>
+<tr><td><code>AivKernel</code></td><td class="num">986</td><td class="num">10.013</td><td class="num warn">2.90%</td><td><div class="bar"><span style="width:5.22%;background:#2b7de9"></span></div></td><td class="num">10.2</td><td class="num">7.6</td><td class="num">25.7</td><td class="num">481.2</td><td class="num">30.5</td></tr>
+<tr><td><code>recurrent_gated_delta_rule_20</code></td><td class="num">288</td><td class="num">7.025</td><td class="num warn">2.03%</td><td><div class="bar"><span style="width:3.66%;background:#2b7de9"></span></div></td><td class="num">24.4</td><td class="num">24.4</td><td class="num">26.0</td><td class="num">26.7</td><td class="num">0.0</td></tr>
+<tr><td><code>add_gemma_rms_norm_kernel_1</code></td><td class="num">780</td><td class="num">5.129</td><td class="num warn">1.48%</td><td><div class="bar"><span style="width:2.67%;background:#2b7de9"></span></div></td><td class="num">6.6</td><td class="num">6.3</td><td class="num">12.2</td><td class="num">14.3</td><td class="num">1.3</td></tr>
+<tr><td><code>aclnnIndexPutImpl_IndexPutV2_IndexPutV2</code></td><td class="num">85</td><td class="num">4.652</td><td class="num warn">1.35%</td><td><div class="bar"><span style="width:2.42%;background:#2b7de9"></span></div></td><td class="num">54.7</td><td class="num">47.1</td><td class="num">170.9</td><td class="num">2024.8</td><td class="num">0.9</td></tr>
+<tr><td><code>move_cache_dynamic_last_kernel_h_block</code></td><td class="num">12</td><td class="num">3.215</td><td class="num ">0.93%</td><td><div class="bar"><span style="width:1.67%;background:#2b7de9"></span></div></td><td class="num">267.9</td><td class="num">529.6</td><td class="num">542.6</td><td class="num">542.6</td><td class="num">0.0</td></tr>
+<tr><td><code>FusedInferAttentionScore</code></td><td class="num">131</td><td class="num">3.066</td><td class="num ">0.89%</td><td><div class="bar"><span style="width:1.60%;background:#2b7de9"></span></div></td><td class="num">23.4</td><td class="num">24.1</td><td class="num">32.0</td><td class="num">33.4</td><td class="num">26.1</td></tr>
+<tr><td><code>SwiGlu</code></td><td class="num">467</td><td class="num">2.525</td><td class="num ">0.73%</td><td><div class="bar"><span style="width:1.32%;background:#2b7de9"></span></div></td><td class="num">5.4</td><td class="num">5.5</td><td class="num">6.3</td><td class="num">6.7</td><td class="num">6.1</td></tr>
+<tr><td><code>fused_gdn_gating_kernel_without_sigmoid_kernel_5</code></td><td class="num">288</td><td class="num">2.391</td><td class="num ">0.69%</td><td><div class="bar"><span style="width:1.25%;background:#2b7de9"></span></div></td><td class="num">8.3</td><td class="num">7.6</td><td class="num">10.2</td><td class="num">10.2</td><td class="num">0.3</td></tr>
+<tr><td><code>causal_conv1d_4_mix_aiv</code></td><td class="num">288</td><td class="num">2.352</td><td class="num ">0.68%</td><td><div class="bar"><span style="width:1.22%;background:#2b7de9"></span></div></td><td class="num">8.2</td><td class="num">8.1</td><td class="num">9.5</td><td class="num">9.6</td><td class="num">0.3</td></tr>
+<tr><td><code>solve_tril_16x16_kernel_paral_v3</code></td><td class="num">48</td><td class="num">2.279</td><td class="num ">0.66%</td><td><div class="bar"><span style="width:1.19%;background:#2b7de9"></span></div></td><td class="num">47.5</td><td class="num">47.4</td><td class="num">50.3</td><td class="num">50.3</td><td class="num">29.7</td></tr>
+<tr><td><code>aclnnInplaceCopy_SliceAiCore_Slice</code></td><td class="num">982</td><td class="num">2.260</td><td class="num ">0.65%</td><td><div class="bar"><span style="width:1.18%;background:#2b7de9"></span></div></td><td class="num">2.3</td><td class="num">1.9</td><td class="num">9.9</td><td class="num">13.3</td><td class="num">50.9</td></tr>
+<tr><td><code>aclnnCat_ConcatD_ConcatD</code></td><td class="num">371</td><td class="num">2.055</td><td class="num ">0.59%</td><td><div class="bar"><span style="width:1.07%;background:#2b7de9"></span></div></td><td class="num">5.5</td><td class="num">3.3</td><td class="num">18.3</td><td class="num">19.2</td><td class="num">71.9</td></tr>
+<tr><td><code>aclnnInplaceCopy_CastAiCore_Cast</code></td><td class="num">931</td><td class="num">1.791</td><td class="num ">0.52%</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td class="num">1.9</td><td class="num">1.4</td><td class="num">8.8</td><td class="num">9.0</td><td class="num">182.6</td></tr>
+<tr><td><code>aclnnIndex_IndexAiCore_Index</code></td><td class="num">144</td><td class="num">1.775</td><td class="num ">0.51%</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td class="num">12.3</td><td class="num">9.8</td><td class="num">18.9</td><td class="num">19.3</td><td class="num">44.8</td></tr>
+<tr><td><code>aclnnCat_SliceAiCore_Slice</code></td><td class="num">864</td><td class="num">1.607</td><td class="num ">0.47%</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td class="num">1.9</td><td class="num">1.9</td><td class="num">2.3</td><td class="num">2.5</td><td class="num">0.0</td></tr>
+<tr><td><code>aclnnScatterNdUpdate_ScatterNdUpdateAiCore_ScatterNdUpdate</code></td><td class="num">262</td><td class="num">1.602</td><td class="num ">0.46%</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td class="num">6.1</td><td class="num">6.0</td><td class="num">7.9</td><td class="num">8.1</td><td class="num">17.4</td></tr>
+<tr><td><code>recompute_w_u_fwd_kernel_npu_kernel</code></td><td class="num">48</td><td class="num">1.528</td><td class="num ">0.44%</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td class="num">31.8</td><td class="num">31.8</td><td class="num">35.1</td><td class="num">35.1</td><td class="num">68.4</td></tr>
+</table>
+<h2>三、哪些算子耗时正常、哪些不正常</h2>
+<h3>判定口径</h3><p style="font-size:13px">① 单次耗时与同规模算子/理论带宽是否匹配；② 长尾（最大值相对 P50 的倍数）；③ PMU：cube 利用率、AIC/AIV 各通路（MAC/VEC/MTE/SCALAR）占比、icache miss；④ 是否单核（Block Num=1）搬运大块数据；⑤ 跨卡是否对称；⑥ host API 单次是否超过 10 ms。</p>
+<h3>✅ 正常（实现健康，暂不需改）</h3><table><tr><th>算子</th><th>依据</th></tr>
+<tr><td><span class="ok">●</span> 大 shape MatMulV2（N=17408/8704/8192/124160，K=5120）</td><td>cube 利用率 74.5%~95.9%，与 910B bf16 理论水平相符；单次耗时随 N 线性增长，无异常长尾</td></tr>
+<tr><td><span class="ok">●</span> SwiGlu / Sigmoid / Mul / Add / LayerNorm / RMSNorm 等逐元素算子</td><td>单次 1~7 us，P99/均值 &lt; 2.5，分布集中，属于正常的访存型小算子</td></tr>
+<tr><td><span class="ok">●</span> GDN 线性注意力主链（recurrent_gated_delta_rule / causal_conv1d / gdn_gating / solve_tril）</td><td>单次 8~48 us 且方差极小（recurrent_gated_delta_rule 288 次全部落在 22~27 us），实现健康</td></tr>
+<tr><td><span class="ok">●</span> FusedInferAttentionScore、split_qkvgate_gemma_rmsnorm_rope、SwiGlu 等已融合算子</td><td>单次 5~23 us，已经具备融合形态，只是每层调用次数多</td></tr>
+<tr><td><span class="ok">●</span> Slice / ConcatD / Fill / OnesLike 等搬运类算子（单次代价）</td><td>单次 1.3~5.5 us，本身不慢；问题在数量（4627 个 kernel 合计 11.0 ms）与 launch 开销</td></tr>
+</table>
+<h3>❌ 不正常（按优先级排序，均有数据证据）</h3>
+<table><tr><th>算子</th><th>异常表现</th><th>证据（rank0/device6）</th><th>疑似原因</th><th>建议动作</th></tr>
+<tr><td><code>aclnnIndexPutImpl_TransposeAiCore_Transpose</code></td><td class="bad">单次 16.09 ms / 16.05 ms，是整份 profile 里最慢的 kernel；P50 只有 284.7 us，长尾比 56 倍</td><td>98 次共 56.97 ms，占设备时间 16.5%；两次 5 维张量 (48,161,24,128,128) 的转置各 16 ms</td><td>GDN 线性注意力 forward_extend（ascend_gdn_backend.py:320）里的 index_put_ 写状态缓存，底层先做一次整块 Transpose 再 IndexPut —— 布局不匹配导致全量拷贝</td><td>状态缓存按算子期望布局分配（或分配时即转置），改成带布局转换的直写 kernel，避免 materialize</td></tr>
+<tr><td><code>AivKernel（通信，rank1/device7）</code></td><td class="bad">单次平均 1529 us、最大 32.8 ms；rank0 同批算子平均仅 10.2 us，相差 150 倍</td><td>rank1 986 个通信 kernel 共 1507.9 ms（占其设备时间 45%）；hcom_allReduce__503 共 132 次累计 1442 ms，而 rank0 同一组仅 0.914 ms</td><td>两卡集合通信不对称：rank1 侧 allReduce 在设备上长时间等待对端/依赖，疑似 rank 间负载错位或 device7 链路/调度异常</td><td>确认两卡是否同步进入 collective（CPU 侧非对称耗时、重编译都会造成错位）；核对 HCCL 组网与 device7 链路；必要时调整 HCCL_ALGO 或多流拆分</td></tr>
+<tr><td><code>aclnnIndexPutImpl_IndexPutV2_IndexPutV2</code></td><td class="bad">单次最长 2024.8 us，P50 47.1 us，长尾比 37 倍</td><td>85 次共 4.65 ms；最长的一次输入同样是 (48,161,24,128,128)</td><td>与上面的 Transpose 同源：批维 48 展开导致单次写入量突增</td><td>与 Transpose 一并整改，按时序分片写入，避免一次性搬运整批状态</td></tr>
+<tr><td><code>move_cache_dynamic_last_kernel_h_block</code></td><td class="bad">平均 267.9 us、最大 542.6 us，且 Block Num = 1（只用 1 个 AI 核）</td><td>12 次共 3.22 ms，单核搬运 (48,21,4,24,128,128) → (48,161,24,128,128)</td><td>缓存搬移 kernel 未并行化，单 block 串行搬运，且位于高频调用路径</td><td>按 head/block 切分成多 block 并行；或改为指针/索引重映射，不做真实拷贝</td></tr>
+<tr><td><code>aclnnMatmul_MatMulCommon_MatMulV2</code></td><td class="bad">耗时本身不算离谱，但 AIC-MTE2 占 AIC 时间 95.2%、MAC 仅 11.6% —— 典型访存瓶颈</td><td>2249 次共 191.3 ms（占 55.4%）；17408×5120 的 390 次占 58.1 ms，124160×5120 的 26 次每次约 960 us</td><td>M 极小（1~4 token）的解码矩阵乘，权重每次都要从 HBM 流式读入，计算单元大量时间在等数据</td><td>权重低比特量化（W8A8/W4A8）、权重预取/常驻、增大有效 batch；MoE 分支考虑 EP 降低单卡权重体积</td></tr>
+<tr><td><code>FusedInferAttentionScore</code></td><td class="bad">AIC 标量时间占比 63.0%，MAC 仅 0.2%，计算通路利用不均衡</td><td>131 次共 3.07 ms，cube 利用率 62.5%，AIV-MTE2 占 20.3%</td><td>注意力 kernel 大部分时间花在标量（索引/掩码/循环控制）上，是典型小 batch/短序列形态</td><td>调整 tiling 或走 decode 专用分支减少标量循环；把 RoPE/KV 写入继续融合进该 kernel</td></tr>
+<tr><td><code>_conv_state_rollback_kernel</code></td><td class="bad">单核执行（Block Num=1），单次 79~128 us</td><td>12 次共 0.63 ms，输入 (48,161,6,5120)</td><td>卷积状态回滚同样是单核搬运/比较型 kernel</td><td>多核切分；投机解码 draft 被拒时用索引回滚代替数据回滚</td></tr>
+<tr><td><code>aclnnNonzeroV2（host API）</code></td><td class="bad">单次 19.6~21.3 ms（rank1 22.1~35.9 ms），host 侧最贵的单个 API</td><td>rank0 6 次共 124.8 ms，rank1 6 次共 160.2 ms；调用点 ascend_hybrid_linear_attn_backend.py:143/173/295</td><td>hybrid linear attention 后端每步用 torch.nonzero 找有效槽位；NPU 上 nonzero 输出形状动态，实现代价极高</td><td>改用预分配固定长度索引 + 计数器，或 device 侧 compaction kernel 替代 nonzero</td></tr>
+<tr><td><code>aclnnCumsum（AI_CPU 执行）</code></td><td class="bad">落在 AI_CPU 上执行（3 次，54~100 us），会打断 AI Core 流水</td><td>另有 chunk_local_cumsum_scalar_kernel 48 次共 0.15 ms 在 AI 核上；host 侧 Cumsum 相关共 355 次、累计 75.7 ms</td><td>FLA/GDN 的 chunk 预处理（prepare_chunk_indices/offsets）与 logits 的 _get_pruned_states 反复做 cumsum</td><td>chunk 偏移量在初始化时算好并缓存复用，避免每步重建</td></tr>
+<tr><td><code>aclnnInplaceCopy_CastAiCore_Cast</code></td><td class="bad">931 次调用、单次仅 1.9 us，但累计等待 182.6 ms（全部算子中最高的排队等待）</td><td>931 次共 1.79 ms 设备时间，却有 182.6 ms 排队等待</td><td>大量 1.9 us 的 dtype 转换排在流上，等待时间远大于执行时间</td><td>统一模型 dtype（避免每层 bf16↔fp32 往返），或把 cast 融合进相邻算子</td></tr>
+</table>
+<h2>四、可以做成融合算子的清单</h2>
+<p style="font-size:13px">按“融合后可减少的 kernel 数”排序。注意分组之间有少量重叠（同一算子可能归属多条链），总额不能直接相加。</p>
+<table><tr><th>融合链</th><th>kernel 数</th><th>设备耗时 (ms)</th><th>占比图</th><th>融合方式</th><th>预期收益</th></tr>
+<tr><td><b>KV/状态缓存写入链（Transpose + IndexPutV2 + Index + ScatterNdUpdate + 搬移）</b></td><td class="num">754</td><td class="num">81.52</td><td><div class="bar"><span style="width:70.76%;background:#2b7de9"></span></div></td><td>把“转置 + 索引写入 + 广播”合成一个带布局转换的直写 kernel；批维 48 不要展开成整体转置</td><td>可消掉两次 16 ms 转置与 12 次单核搬移，约 60~75 ms（设备时间 ~18%）</td></tr>
+<tr><td><b>GDN 小算子链（conv1d + gating + delta_rule + norm + l2norm + cumsum）</b></td><td class="num">1536</td><td class="num">17.83</td><td><div class="bar"><span style="width:15.48%;background:#2b7de9"></span></div></td><td>同层内 5~6 个 8~25 us 的 kernel 融成 1~2 个：conv1d+gating 融合、norm+l2norm 融合</td><td>kernel 数由 1536 降到约 300，省 ~1200 次 launch；设备时间预计省 3~5 ms</td></tr>
+<tr><td><b>RMSNorm/Add/RoPE 归一化链（add_gemma_rms_norm ×3 变体 + GemmaRmsNorm + rope）</b></td><td class="num">1513</td><td class="num">8.83</td><td><div class="bar"><span style="width:7.66%;background:#2b7de9"></span></div></td><td>把 98 次未带 add 的 GemmaRmsNorm 统一到 add+rmsnorm 融合形态；qkv 的 norm+rope 已融合，可再把 gate 切分并入</td><td>减少 ~500 次 kernel，省 1.5~2.5 ms</td></tr>
+<tr><td><b>搬运/拷贝/类型转换/填充链（Slice/Cast/ConcatD/Fill/OnesLike/Arange/BroadcastTo）</b></td><td class="num">4627</td><td class="num">11.05</td><td><div class="bar"><span style="width:9.59%;background:#2b7de9"></span></div></td><td>用缓存的下标/掩码 buffer 取代每步 Fill/OnesLike/Arange；QKV 切分改为 view 而非 slice+cat</td><td>减少 ~3000 次 launch（占全部 kernel 20%），省 4~7 ms</td></tr>
+<tr><td><b>MoE/MLP 出口（SwiGlu + 后续 slice/index/cast）</b></td><td class="num">1593</td><td class="num">6.56</td><td><div class="bar"><span style="width:5.69%;background:#2b7de9"></span></div></td><td>把 SwiGlu 融进上/下投影的 epilogue；slice/index 合并为一次 gather</td><td>省 0.5~1 ms，减少 400+ 次 launch</td></tr>
+<tr><td><b>投机解码/采样链（位置编码/Tile/build_tree/verify_tree/ArgMax）</b></td><td class="num">86</td><td class="num">0.19</td><td><div class="bar"><span style="width:1.00%;background:#2b7de9"></span></div></td><td>tree 构建 + cache loc 分配 + verify 合成一个 kernel；位置编码复用已算好的 buffer</td><td>设备耗时本来就小，收益主要在减少 6 步内的多次小 launch 与 host 同步</td></tr>
+</table>
+<h2>五、性能优化清单（按投入产出排序）</h2>
+<table><tr><th>优先级</th><th>优化项</th><th>依据</th><th>预期收益</th></tr>
+<tr><td><span class="tag p0">P0</span></td><td><b>修掉 16 ms 的 5 维 Transpose（KV/GDN 状态缓存布局）</b></td><td>GDN 后端 forward_extend（ascend_gdn_backend.py:320）的 index_put_ 触发整块转置</td><td>单次 16 ms ×2 = 32 ms，占设备时间 9.3%；连同关联的 IndexPut/Index/搬移共 81.5 ms（23.6%）</td></tr>
+<tr><td><span class="tag p0">P0</span></td><td><b>查清两卡集合通信不对称</b></td><td>rank1 侧 AivKernel 平均 1529 us、rank0 仅 10.2 us；hcom_allReduce__503 在 rank1 累计 1442 ms</td><td>rank1 设备时间 45% 花在通信等待，是整条链路最大的单点</td></tr>
+<tr><td><span class="tag p1">P1</span></td><td><b>消除 host 侧 torch.nonzero（20~36 ms/次）</b></td><td>ascend_hybrid_linear_attn_backend.py:143/173/295 每步调用</td><td>rank0 124.8 ms、rank1 160.2 ms host 时间，且阻塞调度循环</td></tr>
+<tr><td><span class="tag p1">P1</span></td><td><b>权重访存优化（量化 / 预取 / 提高 batch）</b></td><td>MatMulV2 的 AIC-MTE2 占 95.2%、MAC 仅 11.6%，属访存瓶颈</td><td>MatMulV2 占设备时间 55.4%（191.3 ms）几乎全是权重搬运等待，低比特量化可近似线性收益</td></tr>
+<tr><td><span class="tag p1">P1</span></td><td><b>减少 kernel 数量与 launch 开销</b></td><td>78% 的 kernel（11417 个）平均 &lt; 20 us；host 侧 node launch 3302 次、均值 47.5 us、最长 21.3 ms</td><td>小 kernel 合计 57.6 ms 设备时间，但 host 侧光发射就约 157 ms，另有大量流上排队</td></tr>
+<tr><td><span class="tag p2">P2</span></td><td><b>合并搬运类算子、复用下标/掩码 buffer</b></td><td>Slice 982+864 次、Cast 931 次、Fill 945 次、ConcatD 371 次，单次几乎都 &lt; 2.3 us</td><td>4627 个搬运类 kernel 共 11.0 ms，并贡献大量 launch 与流同步</td></tr>
+<tr><td><span class="tag p2">P2</span></td><td><b>GDN/线性注意力链路融合</b></td><td>1536 个 8~48 us 的小 kernel 串成 6 段</td><td>预计减少 1200+ 次 launch，设备时间省 3~5 ms</td></tr>
+<tr><td><span class="tag p2">P2</span></td><td><b>注意力 kernel 标量化问题</b></td><td>FusedInferAttentionScore 的 AIC 标量时间占 63%，MAC 占 0.2%</td><td>当前 131 次仅 3.07 ms，收益有限；长序列/大 batch 下会放大，建议一并调 tiling</td></tr>
+<tr><td><span class="tag p2">P2</span></td><td><b>缓存搬移并行化</b></td><td>move_cache_dynamic_last_kernel_h_block 与 _conv_state_rollback_kernel 均为 Block Num=1 单核执行</td><td>12+12 次共 3.8 ms，改多核后可降到 0.3 ms 量级</td></tr>
+</table>
+<h2>六、附：最慢的 10 个单次 kernel 实例（rank0）</h2>
+<table><tr><th>耗时 (us)</th><th>算子</th><th>核心</th><th>Block</th><th>cube%</th><th>输入 shape</th></tr>
+<tr><td class="num bad">16087.2</td><td><code>aclnnIndexPutImpl_TransposeAiCore_Transpose</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;48,161,24,128,128;5&quot;</td></tr>
+<tr><td class="num bad">16052.1</td><td><code>aclnnIndexPutImpl_TransposeAiCore_Transpose</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;48,161,24,128,128;5&quot;</td></tr>
+<tr><td class="num bad">2024.8</td><td><code>aclnnIndexPutImpl_IndexPutV2_IndexPutV2</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;48,161,24,128,128;48,1,24,128,128;2;2;1&quot;</td></tr>
+<tr><td class="num ">978.2</td><td><code>aclnnMatmul_MatMulCommon_MatMulV2</code></td><td>AI_CORE</td><td class="num">24</td><td class="num">94.8</td><td>&quot;4,5120;124160,5120&quot;</td></tr>
+<tr><td class="num ">972.1</td><td><code>aclnnMatmul_MatMulCommon_MatMulV2</code></td><td>AI_CORE</td><td class="num">24</td><td class="num">95.1</td><td>&quot;4,5120;124160,5120&quot;</td></tr>
+<tr><td class="num ">969.8</td><td><code>aclnnMatmul_MatMulCommon_MatMulV2</code></td><td>AI_CORE</td><td class="num">24</td><td class="num">95.6</td><td>&quot;4,5120;124160,5120&quot;</td></tr>
+<tr><td class="num ">542.6</td><td><code>move_cache_dynamic_last_kernel_h_block</code></td><td>AI_VECTOR_CORE</td><td class="num">1</td><td class="num">0.0</td><td>&quot;48,21,4,24,128,128;1;1;1&quot;</td></tr>
+<tr><td class="num ">317.2</td><td><code>aclnnIndexPutImpl_TransposeAiCore_Transpose</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;161,24,128,128;4&quot;</td></tr>
+<tr><td class="num ">314.4</td><td><code>aclnnIndex_TransposeAiCore_Transpose</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;161,24,128,128;4&quot;</td></tr>
+<tr><td class="num ">170.9</td><td><code>aclnnIndexPutImpl_IndexPutV2_IndexPutV2</code></td><td>AI_VECTOR_CORE</td><td class="num">48</td><td class="num">0.0</td><td>&quot;48,161,6,5120;48,1,6,5120;2;2;1&quot;</td></tr>
+</table>
+<h3>host 侧最贵 API（rank0，来自 api_statistic.csv）</h3>
+<table><tr><th>API</th><th>次数</th><th>总耗时 (ms)</th><th>均值 (us)</th><th>最大 (us)</th><th>说明</th></tr>
+<tr><td><code>aclnnNonzeroV2</code></td><td class="num">6</td><td class="num">124.83</td><td class="num">20805.0</td><td class="num">21339.0</td><td>hybrid linear attn 后端找有效槽位，单次 20 ms 级</td></tr>
+<tr><td><code>aclrtSynchronizeStream</code></td><td class="num">27</td><td class="num">124.33</td><td class="num">4605.0</td><td class="num">21217.0</td><td>同步等待，最长 21 ms</td></tr>
+<tr><td><code>node launch</code></td><td class="num">3302</td><td class="num">156.82</td><td class="num">47.5</td><td class="num">21274.0</td><td>每次算子发射平均 47.5 us，合计 157 ms</td></tr>
+<tr><td><code>aclrtSynchronizeStreamWithTimeout</code></td><td class="num">41</td><td class="num">31.67</td><td class="num">772.0</td><td class="num">31459.0</td><td>含 31.5 ms 的长尾同步</td></tr>
+<tr><td><code>aclrtLaunchKernelWithHostArgs</code></td><td class="num">2525</td><td class="num">16.72</td><td class="num">6.6</td><td class="num">41.0</td><td>真正的 kernel 下发，代价不高</td></tr>
+</table>
+<h2>七、下一步建议</h2><ol><li><b>重采一份可用的 trace</b>：关闭 <code>with_stack</code>，用 <code>schedule(wait=0, warmup=1, active=N)</code> + 每步 <code>profiler.step()</code>，并跑真实并发（而不是 bs=1 的 2 个 prefill + 6 个 verify），否则 step 指标与统计分布都不可用。</li><li><b>先做 P0/P1 四项</b>：状态缓存布局、两卡通信不对称、nonzero、权重访存，这四项覆盖了当前 profile 里绝大部分可回收时间。</li><li><b>融合算子按“先大后小”落地</b>：先做 KV/状态缓存写入的“转置 + 索引写入”融合（一次就能拿回 ~60 ms 量级），再做 GDN 与 RMSNorm 链的小算子融合。</li><li><b>建立回归基线</b>：用 <code>op_statistic.csv</code> 的总耗时与 kernel 数作为基线（本次 345.6 ms / 14602 个 kernel），每次改动后对比这两个数即可判断收益。</li></ol>
+</div></body></html>
