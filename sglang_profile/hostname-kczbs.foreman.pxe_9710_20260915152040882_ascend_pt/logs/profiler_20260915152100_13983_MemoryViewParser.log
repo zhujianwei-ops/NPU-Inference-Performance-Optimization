@@ -1,3 +1,0 @@
-[2026-09-15-15:21:00.764] [INFO] [AscendProfiler_MemoryViewParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9710_20260915152040882_ascend_pt/logs/profiler_20260915152100_13983_MemoryViewParser.log
-[2026-09-15-15:21:00.765] [INFO] [AscendProfiler_MemoryViewParser:78] MemoryViewParser start.
-[2026-09-15-15:21:00.767] [INFO] [AscendProfiler_MemoryViewParser:89] MemoryViewParser finish.

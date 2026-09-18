@@ -1,3 +1,0 @@
-[2026-09-15-15:21:00.151] [INFO] [AscendProfiler_CANNAnalyzeParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9711_20260915152040881_ascend_pt/logs/profiler_20260915152100_13968_CANNAnalyzeParser.log
-[2026-09-15-15:21:00.151] [INFO] [AscendProfiler_CANNAnalyzeParser:41] CANNAnalyzeParser start.
-[2026-09-15-15:21:01.171] [INFO] [AscendProfiler_CANNAnalyzeParser:67] CANNAnalyzeParser finish.

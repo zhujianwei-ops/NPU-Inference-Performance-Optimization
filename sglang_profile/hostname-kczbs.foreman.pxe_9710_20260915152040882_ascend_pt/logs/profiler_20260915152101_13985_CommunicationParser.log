@@ -1,4 +1,0 @@
-[2026-09-15-15:21:01.663] [INFO] [AscendProfiler_CommunicationParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9710_20260915152040882_ascend_pt/logs/profiler_20260915152101_13985_CommunicationParser.log
-[2026-09-15-15:21:01.664] [INFO] [AscendProfiler_CommunicationParser:66] CommunicationParser start.
-[2026-09-15-15:21:01.695] [WARNING] [AscendProfiler_CommunicationParser:69] Get step range failed, the step node list is empty.
-[2026-09-15-15:21:01.746] [INFO] [AscendProfiler_CommunicationParser:73] CommunicationParser finish.

@@ -1,3 +1,0 @@
-[2026-09-15-15:21:02.033] [INFO] [AscendProfiler_OperatorViewParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9710_20260915152040882_ascend_pt/logs/profiler_20260915152102_13995_OperatorViewParser.log
-[2026-09-15-15:21:02.033] [INFO] [AscendProfiler_OperatorViewParser:30] OperatorViewParser start.
-[2026-09-15-15:21:07.668] [INFO] [AscendProfiler_OperatorViewParser:39] OperatorViewParser finish.

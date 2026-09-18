@@ -1,3 +1,0 @@
-[2026-09-15-15:21:01.844] [INFO] [AscendProfiler_IntegrateParser:97] Profiler logger initialized at: /home/zhujianwei/NPU-Inference-Performance-Optimization/sglang_profile/hostname-kczbs.foreman.pxe_9711_20260915152040881_ascend_pt/logs/profiler_20260915152101_13989_IntegrateParser.log
-[2026-09-15-15:21:01.845] [INFO] [AscendProfiler_IntegrateParser:33] IntegrateParser start.
-[2026-09-15-15:21:01.849] [INFO] [AscendProfiler_IntegrateParser:40] IntegrateParser finish.
